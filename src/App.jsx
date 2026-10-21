@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
+import { supabase } from "./lib/supabase";
 import {
   Calendar,
   Clock,
@@ -26,6 +27,7 @@ import {
   Activity,
   Heart,
   Cpu,
+  UserPlus,
   ChevronRight,
   Eye,
   Mic,
@@ -104,6 +106,7 @@ const RECENT_STREAMS = [
 
 export default function App() {
   const [activeNav, setActiveNav] = useState("student-dashboard");
+  const [isAppReady, setIsAppReady] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
   const cameraVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
@@ -177,13 +180,29 @@ export default function App() {
   });
 
   // Role & Admin Authentication state
-  const [userRole, setUserRole] = useState("student"); // "student" | "admin"
+  const [userRole, setUserRole] = useState("student");
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(Boolean(supabase));
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminCredentials, setAdminCredentials] = useState({
     email: "admin.director@wms.ac.rw",
     key: "WMS-ADMIN-2026"
   });
   const [adminAuthError, setAdminAuthError] = useState("");
+  const [adminAccounts, setAdminAccounts] = useState(() => {
+    try {
+      const saved = localStorage.getItem("wms-admin-accounts");
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : [
+        { id: "ADM-001", name: "Stage Director", email: "admin.director@wms.ac.rw", role: "Owner", status: "Active", created: "Today" }
+      ];
+    } catch {
+      return [{ id: "ADM-001", name: "Stage Director", email: "admin.director@wms.ac.rw", role: "Owner", status: "Active", created: "Today" }];
+    }
+  });
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [newAdminAccount, setNewAdminAccount] = useState({ name: "", email: "", role: "Producer" });
+  const [accountError, setAccountError] = useState("");
 
   // Live stage console state
   const [isRunning, setIsRunning] = useState(true);
@@ -350,6 +369,42 @@ export default function App() {
   ]);
   const [selectedMediaPreview, setSelectedMediaPreview] = useState(null);
 
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+    const applySession = async (session) => {
+      const user = session?.user || null;
+      if (!active) return;
+      setAuthUser(user);
+      if (!user) {
+        setUserRole("student");
+        setAuthLoading(false);
+        return;
+      }
+      const { data } = await supabase.from("wms_profiles").select("role, full_name, email").eq("id", user.id).maybeSingle();
+      if (!active) return;
+      const role = data?.role || "student";
+      setUserRole(role === "admin" || role === "producer" || role === "stage_manager" ? "admin" : "student");
+      setAuthLoading(false);
+    };
+
+    supabase.auth.getSession().then(({ data }) => applySession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => applySession(session));
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const readyTimer = window.setTimeout(() => setIsAppReady(true), 700);
+    return () => window.clearTimeout(readyTimer);
+  }, []);
+
   // Clock runner
   useEffect(() => {
     const updateTime = () => {
@@ -399,10 +454,11 @@ export default function App() {
       localStorage.setItem("wms-recent-streams", JSON.stringify(recentStreams));
       localStorage.setItem("wms-saved-broadcasts", JSON.stringify(savedBroadcasts));
       localStorage.setItem("wms-youtube-channels", JSON.stringify(youtubeChannels));
+      localStorage.setItem("wms-admin-accounts", JSON.stringify(adminAccounts));
     } catch {
       // Broadcast history remains available in memory when browser storage is disabled.
     }
-  }, [recentStreams, savedBroadcasts, youtubeChannels]);
+  }, [recentStreams, savedBroadcasts, youtubeChannels, adminAccounts]);
 
   const formatTimer = (sec) => {
     const m = Math.floor(sec / 60);
@@ -854,29 +910,73 @@ export default function App() {
     triggerCueAction(`Cue 0${nextCue} fired at ${stageVenue}`);
   };
 
-  // Admin login handler
-  const handleAdminLogin = (e) => {
+  // Admin login uses Supabase Auth; no shared demo credentials are accepted.
+  const handleAdminLogin = async (e) => {
     e.preventDefault();
-    if (!adminCredentials.email.endsWith("@wms.ac.rw")) {
-      setAdminAuthError("Institutional access violation. Must end with @wms.ac.rw");
-      return;
-    }
-    if (adminCredentials.key !== "WMS-ADMIN-2026") {
-      setAdminAuthError("Invalid administrative security key. Contact Director of IT.");
-      return;
-    }
-    setUserRole("admin");
-    setActiveNav("stage");
     setAdminAuthError("");
+    if (!supabase) {
+      setAdminAuthError("Authentication is not configured for this deployment.");
+      return;
+    }
+    const email = adminCredentials.email.trim().toLowerCase();
+    if (!email || !adminCredentials.key) {
+      setAdminAuthError("Enter your institutional email and password.");
+      return;
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password: adminCredentials.key });
+    if (error) {
+      setAdminAuthError("Sign-in failed. Check your email, password, and confirmation status.");
+      return;
+    }
+    setActiveNav("stage");
     setShowAdminModal(false);
-    triggerCueAction("Admin Authenticated: Stage Director Mode Active");
+    triggerCueAction("Authenticated production session started");
   };
 
-  const handleAdminLogout = () => {
+  const handleCreateAdminAccount = async (event) => {
+    event.preventDefault();
+    setAccountError("");
+    const name = newAdminAccount.name.trim();
+    const email = newAdminAccount.email.trim().toLowerCase();
+    if (!supabase) {
+      setAccountError("Authentication is not configured for this deployment.");
+      return;
+    }
+    if (!name || !email) {
+      setAccountError("Enter the operator name and institutional email.");
+      return;
+    }
+    const { error } = await supabase.auth.signUp({
+      email,
+      password: `${crypto.randomUUID()}-${crypto.randomUUID()}`,
+      options: {
+        data: { full_name: name },
+        emailRedirectTo: `${window.location.origin}/auth/callback`
+      }
+    });
+    if (error) {
+      setAccountError("Account creation failed. The email may already be registered or unavailable.");
+      return;
+    }
+    setNewAdminAccount({ name: "", email: "", role: "Producer" });
+    setShowAccountModal(false);
+    triggerCueAction(`Invitation created for ${email}; role approval required`);
+  };
+
+  const handleRemoveAdminAccount = (id) => {
+    if (adminAccounts.length <= 1) return;
+    const account = adminAccounts.find((item) => item.id === id);
+    setAdminAccounts((accounts) => accounts.filter((item) => item.id !== id));
+    triggerCueAction(`Admin account removed: ${account?.email || id}`);
+  };
+
+  const handleAdminLogout = async () => {
     handleDisconnectCamera();
+    if (supabase) await supabase.auth.signOut();
+    setAuthUser(null);
     setUserRole("student");
     setActiveNav("student-dashboard");
-    triggerCueAction("Admin Session Terminated. Reverted to Student Mode.");
+    triggerCueAction("Production session terminated");
   };
 
   // Admin-only event deletion
@@ -1157,13 +1257,38 @@ export default function App() {
     { id: "student-validation", label: "Student Pass", icon: ShieldCheck }
   ];
 
+  if (!isAppReady) {
+    return (
+      <main className="min-h-screen bg-[#030712] text-slate-100 flex items-center justify-center px-6">
+        <div className="w-full max-w-sm text-center">
+          <div className="mx-auto mb-6 w-16 h-16 rounded-3xl bg-gradient-to-br from-blue-500 to-indigo-700 border border-blue-300/40 flex items-center justify-center shadow-2xl shadow-blue-600/25">
+            <div className="relative flex items-center justify-center">
+              <Radio className="w-8 h-8" strokeWidth={2.5} />
+              <span className="absolute w-2 h-2 rounded-full bg-white" />
+            </div>
+          </div>
+          <p className="text-[11px] font-mono tracking-[0.3em] text-blue-400 uppercase">WMS Live</p>
+          <h1 className="mt-3 text-2xl font-bold text-white">Preparing your workspace</h1>
+          <p className="mt-2 text-sm text-slate-400">Connecting the student portal and broadcast controls.</p>
+          <div className="mt-8 h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className="h-full w-2/3 rounded-full bg-gradient-to-r from-blue-500 to-indigo-400 animate-pulse" />
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500">Secure campus broadcast platform</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       {/* Top Header */}
       <header className="h-16 border-b border-slate-800 bg-[#0B0F19]/90 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-600 border border-blue-400/30 flex items-center justify-center font-black tracking-wider text-white text-xs shadow-lg shadow-blue-600/20">
-            WMS
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 border border-blue-300/40 flex items-center justify-center text-white shadow-lg shadow-blue-600/25" aria-label="WMS Live logo">
+            <div className="relative flex items-center justify-center">
+              <Radio className="w-5 h-5" strokeWidth={2.5} />
+              <span className="absolute w-1.5 h-1.5 rounded-full bg-white" />
+            </div>
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -1189,7 +1314,7 @@ export default function App() {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
             <span className="w-2 h-2 rounded-full bg-amber-500" />
             <span className="text-slate-400">ENVIRONMENT:</span>
-            <span className="text-amber-400 font-bold">LOCAL DEMO</span>
+            <span className="text-emerald-400 font-bold">WORKSPACE</span>
           </div>
 
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
@@ -1247,13 +1372,14 @@ export default function App() {
               <nav className="mt-2 space-y-1">
                 {(userRole === "admin"
                   ? [
-                      { id: "stage", label: "Stage Console", icon: Radio, badge: "DEMO" },
+                      { id: "stage", label: "Stage Console", icon: Radio },
                       { id: "broadcast", label: "Live Control Room", icon: Video, badge: liveEventId ? "ON AIR" : undefined },
                       { id: "broadcast-library", label: "Broadcast Library", icon: Film, count: savedBroadcasts.length },
                       { id: "banner-manager", label: "Student Banner & Photos", icon: ImageIcon, count: heroSlides.length },
                       { id: "schedule", label: "Events Timetable", icon: Calendar, count: eventsList.length },
                       { id: "validation", label: "Student Pass & Validation", icon: ShieldCheck },
-                      { id: "media", label: "Media Upload Vault", icon: Film, count: mediaVault.length }
+                      { id: "media", label: "Media Upload Vault", icon: Film, count: mediaVault.length },
+                      { id: "admin-accounts", label: "Admin Accounts", icon: UserPlus, count: adminAccounts.length }
                     ]
                   : studentNavItems
                 ).map((item) => (
@@ -1332,7 +1458,7 @@ export default function App() {
                     </div>
                     <div className="flex justify-between text-slate-400">
                       <span>Digital Snake</span>
-                      <span className="text-amber-400 font-mono">DEMO DATA</span>
+                      <span className="text-emerald-400 font-mono">LIVE WORKSPACE</span>
                     </div>
                   </>
                 ) : (
@@ -2329,6 +2455,36 @@ export default function App() {
           {/* ==============================================================
               VIEW 1: LIVE STAGE CONSOLE
              ============================================================== */}
+          {userRole === "admin" && activeNav === "admin-accounts" && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-amber-500">Access control</p>
+                  <h2 className="mt-2 text-2xl font-bold text-white">Admin accounts</h2>
+                  <p className="mt-1 text-sm text-slate-400">Manage staff access for the live production workspace.</p>
+                </div>
+                <button onClick={() => { setAccountError(""); setShowAccountModal(true); }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-amber-500">
+                  <UserPlus className="h-4 w-4" /> Create admin account
+                </button>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 overflow-hidden">
+                <div className="grid grid-cols-[1.4fr_1.5fr_.8fr_.7fr_auto] gap-4 border-b border-slate-800 px-5 py-3 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  <span>Name</span><span>Institutional email</span><span>Role</span><span>Status</span><span />
+                </div>
+                {adminAccounts.map((account) => (
+                  <div key={account.id} className="grid grid-cols-[1.4fr_1.5fr_.8fr_.7fr_auto] items-center gap-4 border-b border-slate-800/70 px-5 py-4 last:border-0">
+                    <div><p className="text-sm font-semibold text-white">{account.name}</p><p className="text-[10px] text-slate-500">{account.id} · {account.created}</p></div>
+                    <span className="text-xs text-slate-300">{account.email}</span>
+                    <span className="text-xs text-slate-300">{account.role}</span>
+                    <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{account.status}</span>
+                    <button disabled={adminAccounts.length <= 1} onClick={() => handleRemoveAdminAccount(account.id)} className="rounded-lg p-2 text-slate-500 hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30" aria-label={`Remove ${account.name}`}><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs text-slate-400"><strong className="text-blue-300">Production note:</strong> This workspace currently stores account records locally for the prototype. Supabase is connected, but its schema could not be read in this session; wire these records to Supabase Auth and an RLS-protected profiles table before production deployment.</div>
+            </div>
+          )}
+
           {activeNav === "stage" && (
             <div className="space-y-6">
               <section
@@ -2381,7 +2537,7 @@ export default function App() {
                   <span className="stage-control-strip__signal" />
                   <div>
                     <strong>Stage operations</strong>
-                    <span>LOCAL DEMO · HARDWARE NOT CONNECTED</span>
+                    <span>HARDWARE NOT CONNECTED</span>
                   </div>
                 </div>
                 <label>
@@ -3180,6 +3336,21 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {showAccountModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-5 rounded-3xl border border-amber-500/30 bg-[#0B0F19] p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3"><div><p className="text-[10px] font-mono uppercase tracking-wider text-amber-400">Access control</p><h3 className="mt-1 text-sm font-bold uppercase tracking-wider text-white">Create admin account</h3></div><button onClick={() => setShowAccountModal(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-900 hover:text-white" aria-label="Close"><X className="h-5 w-5" /></button></div>
+            <form onSubmit={handleCreateAdminAccount} className="space-y-4 text-xs">
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Full name</span><input required value={newAdminAccount.name} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, name: event.target.value })} placeholder="e.g. Aline Uwase" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /></label>
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Institutional email</span><input required type="email" value={newAdminAccount.email} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, email: event.target.value })} placeholder="name@wms.ac.rw" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /></label>
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Workspace role</span><select value={newAdminAccount.role} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, role: event.target.value })} className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500"><option>Producer</option><option>Stage Manager</option><option>Viewer</option></select></label>
+              {accountError && <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-red-400">{accountError}</p>}
+              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 py-3 font-bold text-white hover:bg-amber-500"><UserPlus className="h-4 w-4" /> Create account</button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ==============================================================
           MODAL: ADMIN AUTHENTICATION DIALOG
