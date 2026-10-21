@@ -26,6 +26,7 @@ import {
   Activity,
   Heart,
   Cpu,
+  UserPlus,
   ChevronRight,
   Eye,
   Mic,
@@ -185,6 +186,20 @@ export default function App() {
     key: "WMS-ADMIN-2026"
   });
   const [adminAuthError, setAdminAuthError] = useState("");
+  const [adminAccounts, setAdminAccounts] = useState(() => {
+    try {
+      const saved = localStorage.getItem("wms-admin-accounts");
+      const parsed = saved ? JSON.parse(saved) : null;
+      return Array.isArray(parsed) && parsed.length > 0 ? parsed : [
+        { id: "ADM-001", name: "Stage Director", email: "admin.director@wms.ac.rw", role: "Owner", status: "Active", created: "Today" }
+      ];
+    } catch {
+      return [{ id: "ADM-001", name: "Stage Director", email: "admin.director@wms.ac.rw", role: "Owner", status: "Active", created: "Today" }];
+    }
+  });
+  const [showAccountModal, setShowAccountModal] = useState(false);
+  const [newAdminAccount, setNewAdminAccount] = useState({ name: "", email: "", role: "Producer" });
+  const [accountError, setAccountError] = useState("");
 
   // Live stage console state
   const [isRunning, setIsRunning] = useState(true);
@@ -405,10 +420,11 @@ export default function App() {
       localStorage.setItem("wms-recent-streams", JSON.stringify(recentStreams));
       localStorage.setItem("wms-saved-broadcasts", JSON.stringify(savedBroadcasts));
       localStorage.setItem("wms-youtube-channels", JSON.stringify(youtubeChannels));
+      localStorage.setItem("wms-admin-accounts", JSON.stringify(adminAccounts));
     } catch {
       // Broadcast history remains available in memory when browser storage is disabled.
     }
-  }, [recentStreams, savedBroadcasts, youtubeChannels]);
+  }, [recentStreams, savedBroadcasts, youtubeChannels, adminAccounts]);
 
   const formatTimer = (sec) => {
     const m = Math.floor(sec / 60);
@@ -878,6 +894,39 @@ export default function App() {
     triggerCueAction("Admin Authenticated: Stage Director Mode Active");
   };
 
+  const handleCreateAdminAccount = (event) => {
+    event.preventDefault();
+    const name = newAdminAccount.name.trim();
+    const email = newAdminAccount.email.trim().toLowerCase();
+    if (!name || !email.endsWith("@wms.ac.rw")) {
+      setAccountError("Use a name and a valid @wms.ac.rw institutional email.");
+      return;
+    }
+    if (adminAccounts.some((account) => account.email === email)) {
+      setAccountError("An account with this institutional email already exists.");
+      return;
+    }
+    setAdminAccounts((accounts) => [{
+      id: `ADM-${String(Date.now()).slice(-6)}`,
+      name,
+      email,
+      role: newAdminAccount.role,
+      status: "Active",
+      created: "Just now"
+    }, ...accounts]);
+    setNewAdminAccount({ name: "", email: "", role: "Producer" });
+    setAccountError("");
+    setShowAccountModal(false);
+    triggerCueAction(`Admin account created for ${email}`);
+  };
+
+  const handleRemoveAdminAccount = (id) => {
+    if (adminAccounts.length <= 1) return;
+    const account = adminAccounts.find((item) => item.id === id);
+    setAdminAccounts((accounts) => accounts.filter((item) => item.id !== id));
+    triggerCueAction(`Admin account removed: ${account?.email || id}`);
+  };
+
   const handleAdminLogout = () => {
     handleDisconnectCamera();
     setUserRole("student");
@@ -1284,7 +1333,8 @@ export default function App() {
                       { id: "banner-manager", label: "Student Banner & Photos", icon: ImageIcon, count: heroSlides.length },
                       { id: "schedule", label: "Events Timetable", icon: Calendar, count: eventsList.length },
                       { id: "validation", label: "Student Pass & Validation", icon: ShieldCheck },
-                      { id: "media", label: "Media Upload Vault", icon: Film, count: mediaVault.length }
+                      { id: "media", label: "Media Upload Vault", icon: Film, count: mediaVault.length },
+                      { id: "admin-accounts", label: "Admin Accounts", icon: UserPlus, count: adminAccounts.length }
                     ]
                   : studentNavItems
                 ).map((item) => (
@@ -2360,6 +2410,36 @@ export default function App() {
           {/* ==============================================================
               VIEW 1: LIVE STAGE CONSOLE
              ============================================================== */}
+          {userRole === "admin" && activeNav === "admin-accounts" && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-mono uppercase tracking-[0.2em] text-amber-500">Access control</p>
+                  <h2 className="mt-2 text-2xl font-bold text-white">Admin accounts</h2>
+                  <p className="mt-1 text-sm text-slate-400">Manage staff access for the live production workspace.</p>
+                </div>
+                <button onClick={() => { setAccountError(""); setShowAccountModal(true); }} className="inline-flex items-center justify-center gap-2 rounded-xl bg-amber-600 px-4 py-2.5 text-xs font-bold text-white hover:bg-amber-500">
+                  <UserPlus className="h-4 w-4" /> Create admin account
+                </button>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/60 overflow-hidden">
+                <div className="grid grid-cols-[1.4fr_1.5fr_.8fr_.7fr_auto] gap-4 border-b border-slate-800 px-5 py-3 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                  <span>Name</span><span>Institutional email</span><span>Role</span><span>Status</span><span />
+                </div>
+                {adminAccounts.map((account) => (
+                  <div key={account.id} className="grid grid-cols-[1.4fr_1.5fr_.8fr_.7fr_auto] items-center gap-4 border-b border-slate-800/70 px-5 py-4 last:border-0">
+                    <div><p className="text-sm font-semibold text-white">{account.name}</p><p className="text-[10px] text-slate-500">{account.id} · {account.created}</p></div>
+                    <span className="text-xs text-slate-300">{account.email}</span>
+                    <span className="text-xs text-slate-300">{account.role}</span>
+                    <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold text-emerald-400"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />{account.status}</span>
+                    <button disabled={adminAccounts.length <= 1} onClick={() => handleRemoveAdminAccount(account.id)} className="rounded-lg p-2 text-slate-500 hover:bg-red-500/10 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-30" aria-label={`Remove ${account.name}`}><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 text-xs text-slate-400"><strong className="text-blue-300">Production note:</strong> This workspace currently stores account records locally for the prototype. Supabase is connected, but its schema could not be read in this session; wire these records to Supabase Auth and an RLS-protected profiles table before production deployment.</div>
+            </div>
+          )}
+
           {activeNav === "stage" && (
             <div className="space-y-6">
               <section
@@ -3211,6 +3291,21 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {showAccountModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md space-y-5 rounded-3xl border border-amber-500/30 bg-[#0B0F19] p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3"><div><p className="text-[10px] font-mono uppercase tracking-wider text-amber-400">Access control</p><h3 className="mt-1 text-sm font-bold uppercase tracking-wider text-white">Create admin account</h3></div><button onClick={() => setShowAccountModal(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-900 hover:text-white" aria-label="Close"><X className="h-5 w-5" /></button></div>
+            <form onSubmit={handleCreateAdminAccount} className="space-y-4 text-xs">
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Full name</span><input required value={newAdminAccount.name} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, name: event.target.value })} placeholder="e.g. Aline Uwase" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /></label>
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Institutional email</span><input required type="email" value={newAdminAccount.email} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, email: event.target.value })} placeholder="name@wms.ac.rw" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /></label>
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Workspace role</span><select value={newAdminAccount.role} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, role: event.target.value })} className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500"><option>Producer</option><option>Stage Manager</option><option>Viewer</option></select></label>
+              {accountError && <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-red-400">{accountError}</p>}
+              <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 py-3 font-bold text-white hover:bg-amber-500"><UserPlus className="h-4 w-4" /> Create account</button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ==============================================================
           MODAL: ADMIN AUTHENTICATION DIALOG
