@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
+import { supabase } from "./lib/supabase";
 import {
   Calendar,
   Clock,
@@ -179,7 +180,9 @@ export default function App() {
   });
 
   // Role & Admin Authentication state
-  const [userRole, setUserRole] = useState("student"); // "student" | "admin"
+  const [userRole, setUserRole] = useState("student");
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(Boolean(supabase));
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminCredentials, setAdminCredentials] = useState({
     email: "admin.director@wms.ac.rw",
@@ -365,6 +368,37 @@ export default function App() {
     }
   ]);
   const [selectedMediaPreview, setSelectedMediaPreview] = useState(null);
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return undefined;
+    }
+
+    let active = true;
+    const applySession = async (session) => {
+      const user = session?.user || null;
+      if (!active) return;
+      setAuthUser(user);
+      if (!user) {
+        setUserRole("student");
+        setAuthLoading(false);
+        return;
+      }
+      const { data } = await supabase.from("wms_profiles").select("role, full_name, email").eq("id", user.id).maybeSingle();
+      if (!active) return;
+      const role = data?.role || "student";
+      setUserRole(role === "admin" || role === "producer" || role === "stage_manager" ? "admin" : "student");
+      setAuthLoading(false);
+    };
+
+    supabase.auth.getSession().then(({ data }) => applySession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => applySession(session));
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     const readyTimer = window.setTimeout(() => setIsAppReady(true), 700);
@@ -876,48 +910,57 @@ export default function App() {
     triggerCueAction(`Cue 0${nextCue} fired at ${stageVenue}`);
   };
 
-  // Admin login handler
-  const handleAdminLogin = (e) => {
+  // Admin login uses Supabase Auth; no shared demo credentials are accepted.
+  const handleAdminLogin = async (e) => {
     e.preventDefault();
-    if (!adminCredentials.email.endsWith("@wms.ac.rw")) {
-      setAdminAuthError("Institutional access violation. Must end with @wms.ac.rw");
-      return;
-    }
-    if (adminCredentials.key !== "WMS-ADMIN-2026") {
-      setAdminAuthError("Invalid administrative security key. Contact Director of IT.");
-      return;
-    }
-    setUserRole("admin");
-    setActiveNav("stage");
     setAdminAuthError("");
+    if (!supabase) {
+      setAdminAuthError("Authentication is not configured for this deployment.");
+      return;
+    }
+    const email = adminCredentials.email.trim().toLowerCase();
+    if (!email || !adminCredentials.key) {
+      setAdminAuthError("Enter your institutional email and password.");
+      return;
+    }
+    const { error } = await supabase.auth.signInWithPassword({ email, password: adminCredentials.key });
+    if (error) {
+      setAdminAuthError("Sign-in failed. Check your email, password, and confirmation status.");
+      return;
+    }
+    setActiveNav("stage");
     setShowAdminModal(false);
-    triggerCueAction("Admin Authenticated: Stage Director Mode Active");
+    triggerCueAction("Authenticated production session started");
   };
 
-  const handleCreateAdminAccount = (event) => {
+  const handleCreateAdminAccount = async (event) => {
     event.preventDefault();
+    setAccountError("");
     const name = newAdminAccount.name.trim();
     const email = newAdminAccount.email.trim().toLowerCase();
-    if (!name || !email.endsWith("@wms.ac.rw")) {
-      setAccountError("Use a name and a valid @wms.ac.rw institutional email.");
+    if (!supabase) {
+      setAccountError("Authentication is not configured for this deployment.");
       return;
     }
-    if (adminAccounts.some((account) => account.email === email)) {
-      setAccountError("An account with this institutional email already exists.");
+    if (!name || !email) {
+      setAccountError("Enter the operator name and institutional email.");
       return;
     }
-    setAdminAccounts((accounts) => [{
-      id: `ADM-${String(Date.now()).slice(-6)}`,
-      name,
+    const { error } = await supabase.auth.signUp({
       email,
-      role: newAdminAccount.role,
-      status: "Active",
-      created: "Just now"
-    }, ...accounts]);
+      password: `${crypto.randomUUID()}-${crypto.randomUUID()}`,
+      options: {
+        data: { full_name: name },
+        emailRedirectTo: `${window.location.origin}/auth/callback`
+      }
+    });
+    if (error) {
+      setAccountError("Account creation failed. The email may already be registered or unavailable.");
+      return;
+    }
     setNewAdminAccount({ name: "", email: "", role: "Producer" });
-    setAccountError("");
     setShowAccountModal(false);
-    triggerCueAction(`Admin account created for ${email}`);
+    triggerCueAction(`Invitation created for ${email}; role approval required`);
   };
 
   const handleRemoveAdminAccount = (id) => {
@@ -927,11 +970,13 @@ export default function App() {
     triggerCueAction(`Admin account removed: ${account?.email || id}`);
   };
 
-  const handleAdminLogout = () => {
+  const handleAdminLogout = async () => {
     handleDisconnectCamera();
+    if (supabase) await supabase.auth.signOut();
+    setAuthUser(null);
     setUserRole("student");
     setActiveNav("student-dashboard");
-    triggerCueAction("Admin Session Terminated. Reverted to Student Mode.");
+    triggerCueAction("Production session terminated");
   };
 
   // Admin-only event deletion
