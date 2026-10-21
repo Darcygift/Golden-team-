@@ -17,36 +17,36 @@ import {
   RotateCcw,
   Sliders,
   Volume2,
-  Tv,
   Film,
   Image as ImageIcon,
-  FileCheck,
   KeyRound,
   Download,
-  Search,
   Plus,
   X,
-  Sparkles,
   Activity,
   Heart,
-  HardDrive,
   Cpu,
-  Wifi,
-  ExternalLink,
   ChevronRight,
   Eye,
-  Settings2,
   Mic,
-  Maximize2,
   Lock,
   Unlock,
   ShieldAlert,
   LogOut,
   Trash2,
-  Flame,
   AlertTriangle,
   ChevronLeft
 } from "lucide-react";
+
+const getYoutubeChannelUrl = (value) => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !["youtube.com", "www.youtube.com"].includes(url.hostname)) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+};
 
 const getStreamEmbedUrl = (value) => {
   try {
@@ -134,6 +134,29 @@ export default function App() {
   const [liveEventId, setLiveEventId] = useState(null);
   const [selectedBroadcastEventId, setSelectedBroadcastEventId] = useState("EVT-801");
   const [reservedEventIds, setReservedEventIds] = useState([]);
+  const [savedBroadcasts, setSavedBroadcasts] = useState(() => {
+    try {
+      const saved = localStorage.getItem("wms-saved-broadcasts");
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [youtubeChannels, setYoutubeChannels] = useState(() => {
+    try {
+      const saved = localStorage.getItem("wms-youtube-channels");
+      const parsed = saved ? JSON.parse(saved) : [
+        { id: "yt-main", name: "WMS Official Channel", url: "https://www.youtube.com/@WorldMissionSchool", status: "Connected" }
+      ];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [youtubeChannelName, setYoutubeChannelName] = useState("");
+  const [youtubeChannelUrl, setYoutubeChannelUrl] = useState("");
+
   const [recentStreams, setRecentStreams] = useState(() => {
     try {
       const saved = localStorage.getItem("wms-recent-streams");
@@ -374,10 +397,12 @@ export default function App() {
   useEffect(() => {
     try {
       localStorage.setItem("wms-recent-streams", JSON.stringify(recentStreams));
+      localStorage.setItem("wms-saved-broadcasts", JSON.stringify(savedBroadcasts));
+      localStorage.setItem("wms-youtube-channels", JSON.stringify(youtubeChannels));
     } catch {
-      // Recent stream history remains available in memory when browser storage is disabled.
+      // Broadcast history remains available in memory when browser storage is disabled.
     }
-  }, [recentStreams]);
+  }, [recentStreams, savedBroadcasts, youtubeChannels]);
 
   const formatTimer = (sec) => {
     const m = Math.floor(sec / 60);
@@ -952,6 +977,33 @@ export default function App() {
     );
   };
 
+  const handleAddYoutubeChannel = (event) => {
+    event.preventDefault();
+    const url = youtubeChannelUrl.trim();
+    if (!youtubeChannelName.trim() || !url || !getYoutubeChannelUrl(url)) return;
+    setYoutubeChannels((channels) => [
+      ...channels,
+      { id: `yt-${Date.now()}`, name: youtubeChannelName.trim(), url, status: "Connected" }
+    ]);
+    setYoutubeChannelName("");
+    setYoutubeChannelUrl("");
+    triggerCueAction(`YouTube channel connected: ${youtubeChannelName.trim()}`);
+  };
+
+  const handleSaveBroadcast = () => {
+    const event = eventsList.find((item) => item.id === liveEventId);
+    if (!event) return;
+    setSavedBroadcasts((items) => [{
+      id: `SHOW-${Date.now()}`,
+      title: event.title,
+      eventId: event.id,
+      url: event.streamUrl,
+      savedAt: new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
+      duration: formatTimer(obsStreamDuration)
+    }, ...items]);
+    triggerCueAction(`Saved broadcast: ${event.title}`);
+  };
+
   const handleStartBroadcast = async () => {
     const selectedEvent = eventsList.find((event) => event.id === selectedBroadcastEventId);
     const embedUrl = getStreamEmbedUrl(streamWatchUrl);
@@ -1197,6 +1249,7 @@ export default function App() {
                   ? [
                       { id: "stage", label: "Stage Console", icon: Radio, badge: "DEMO" },
                       { id: "broadcast", label: "Live Control Room", icon: Video, badge: liveEventId ? "ON AIR" : undefined },
+                      { id: "broadcast-library", label: "Broadcast Library", icon: Film, count: savedBroadcasts.length },
                       { id: "banner-manager", label: "Student Banner & Photos", icon: ImageIcon, count: heroSlides.length },
                       { id: "schedule", label: "Events Timetable", icon: Calendar, count: eventsList.length },
                       { id: "validation", label: "Student Pass & Validation", icon: ShieldCheck },
@@ -1555,9 +1608,12 @@ export default function App() {
                   )}
 
                   {liveEventId ? (
-                    <button onClick={handleEndBroadcast} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-600 text-sm font-bold text-white hover:bg-red-500">
-                      <Pause className="h-4 w-4" /> Stop OBS stream & unpublish
-                    </button>
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <button onClick={handleEndBroadcast} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-red-600 text-sm font-bold text-white hover:bg-red-500">
+                        <Pause className="h-4 w-4" /> Stop OBS stream & unpublish
+                      </button>
+                      <button onClick={handleSaveBroadcast} title="Save a copy of this live show" className="flex h-11 items-center justify-center gap-2 rounded-xl border border-slate-700 px-3 text-xs font-bold text-slate-200 hover:bg-slate-800"><Download className="h-4 w-4" /> Save</button>
+                    </div>
                   ) : (
                     <button
                       onClick={handleStartBroadcast}
@@ -2611,6 +2667,59 @@ export default function App() {
                   <span className="text-white font-mono">{cueLogs[0]?.text}</span>
                 </div>
                 <span className="font-mono text-slate-500 text-[11px]">Logged at {cueLogs[0]?.time} CAT</span>
+              </div>
+            </div>
+          )}
+
+          {userRole === "admin" && activeNav === "broadcast-library" && (
+            <div className="space-y-6">
+              <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Content operations</p>
+                  <h2 className="mt-2 text-2xl font-black text-white">Broadcast library & destinations</h2>
+                  <p className="mt-1 max-w-3xl text-sm text-slate-500">Keep every finished show discoverable for students and connect approved YouTube channels before the next broadcast.</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-right">
+                  <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">Saved shows</div>
+                  <div className="mt-1 text-2xl font-black text-emerald-800">{savedBroadcasts.length}</div>
+                </div>
+              </div>
+
+              <div className="grid xl:grid-cols-[1.1fr_0.9fr] gap-6">
+                <section className="rounded-3xl border border-slate-800 bg-[#0B0F19] p-5">
+                  <div className="flex items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                    <div>
+                      <h3 className="text-sm font-bold text-white">Saved live shows</h3>
+                      <p className="mt-1 text-xs text-slate-500">Finished broadcasts are saved here after you stop OBS.</p>
+                    </div>
+                    <Film className="h-4 w-4 text-blue-400" />
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    {savedBroadcasts.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-700 p-6 text-center text-xs text-slate-500">No saved broadcasts yet. Start and stop a show from Live Control Room.</div>
+                    ) : savedBroadcasts.map((show) => (
+                      <div key={show.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-bold text-white">{show.title}</div>
+                          <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-slate-500"><span>{show.savedAt}</span><span>{show.duration}</span><span className="font-mono">{show.id}</span></div>
+                        </div>
+                        <a href={show.url} target="_blank" rel="noreferrer" className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-700 px-3 text-xs font-semibold text-blue-300 hover:bg-slate-800"><Play className="h-3.5 w-3.5" /> Watch recording</a>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rounded-3xl border border-slate-800 bg-[#0B0F19] p-5">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-4"><Radio className="h-4 w-4 text-red-400" /><div><h3 className="text-sm font-bold text-white">YouTube channels</h3><p className="mt-1 text-xs text-slate-500">Add public channel links for student discovery.</p></div></div>
+                  <form onSubmit={handleAddYoutubeChannel} className="mt-4 space-y-3">
+                    <input value={youtubeChannelName} onChange={(event) => setYoutubeChannelName(event.target.value)} placeholder="Channel name" aria-label="YouTube channel name" className="h-10 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs text-slate-200 placeholder:text-slate-600" />
+                    <input value={youtubeChannelUrl} onChange={(event) => setYoutubeChannelUrl(event.target.value)} placeholder="https://www.youtube.com/@channel" aria-label="YouTube channel URL" type="url" className="h-10 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs text-slate-200 placeholder:text-slate-600" />
+                    <button type="submit" className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-red-600 text-xs font-bold text-white hover:bg-red-500"><Plus className="h-4 w-4" /> Add channel</button>
+                  </form>
+                  <div className="mt-4 space-y-2">
+                    {youtubeChannels.map((channel) => <a key={channel.id} href={channel.url} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-3 hover:border-red-400/50"><span className="min-w-0"><span className="block truncate text-xs font-semibold text-white">{channel.name}</span><span className="block truncate text-[10px] text-slate-500">{channel.url}</span></span><span className="ml-3 shrink-0 text-[10px] font-bold uppercase text-emerald-400">{channel.status}</span></a>)}
+                  </div>
+                </section>
               </div>
             </div>
           )}
