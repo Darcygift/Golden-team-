@@ -104,6 +104,7 @@ const RECENT_STREAMS = [
 
 export default function App() {
   const [activeNav, setActiveNav] = useState("student-dashboard");
+  const [isAppReady, setIsAppReady] = useState(false);
   const [currentTime, setCurrentTime] = useState("");
   const cameraVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
@@ -349,6 +350,11 @@ export default function App() {
     }
   ]);
   const [selectedMediaPreview, setSelectedMediaPreview] = useState(null);
+
+  useEffect(() => {
+    const readyTimer = window.setTimeout(() => setIsAppReady(true), 700);
+    return () => window.clearTimeout(readyTimer);
+  }, []);
 
   // Clock runner
   useEffect(() => {
@@ -1157,13 +1163,38 @@ export default function App() {
     { id: "student-validation", label: "Student Pass", icon: ShieldCheck }
   ];
 
+  if (!isAppReady) {
+    return (
+      <main className="min-h-screen bg-[#030712] text-slate-100 flex items-center justify-center px-6">
+        <div className="w-full max-w-sm text-center">
+          <div className="mx-auto mb-6 w-16 h-16 rounded-3xl bg-gradient-to-br from-blue-500 to-indigo-700 border border-blue-300/40 flex items-center justify-center shadow-2xl shadow-blue-600/25">
+            <div className="relative flex items-center justify-center">
+              <Radio className="w-8 h-8" strokeWidth={2.5} />
+              <span className="absolute w-2 h-2 rounded-full bg-white" />
+            </div>
+          </div>
+          <p className="text-[11px] font-mono tracking-[0.3em] text-blue-400 uppercase">WMS Live</p>
+          <h1 className="mt-3 text-2xl font-bold text-white">Preparing your workspace</h1>
+          <p className="mt-2 text-sm text-slate-400">Connecting the student portal and broadcast controls.</p>
+          <div className="mt-8 h-1.5 overflow-hidden rounded-full bg-slate-800">
+            <div className="h-full w-2/3 rounded-full bg-gradient-to-r from-blue-500 to-indigo-400 animate-pulse" />
+          </div>
+          <p className="mt-3 text-[11px] text-slate-500">Secure campus broadcast platform</p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#030712] text-slate-100 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
       {/* Top Header */}
       <header className="h-16 border-b border-slate-800 bg-[#0B0F19]/90 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-blue-600 border border-blue-400/30 flex items-center justify-center font-black tracking-wider text-white text-xs shadow-lg shadow-blue-600/20">
-            WMS
+          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 border border-blue-300/40 flex items-center justify-center text-white shadow-lg shadow-blue-600/25" aria-label="WMS Live logo">
+            <div className="relative flex items-center justify-center">
+              <Radio className="w-5 h-5" strokeWidth={2.5} />
+              <span className="absolute w-1.5 h-1.5 rounded-full bg-white" />
+            </div>
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -1189,7 +1220,7 @@ export default function App() {
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
             <span className="w-2 h-2 rounded-full bg-amber-500" />
             <span className="text-slate-400">ENVIRONMENT:</span>
-            <span className="text-amber-400 font-bold">LOCAL DEMO</span>
+            <span className="text-emerald-400 font-bold">WORKSPACE</span>
           </div>
 
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800">
@@ -1247,7 +1278,7 @@ export default function App() {
               <nav className="mt-2 space-y-1">
                 {(userRole === "admin"
                   ? [
-                      { id: "stage", label: "Stage Console", icon: Radio, badge: "DEMO" },
+                      { id: "stage", label: "Stage Console", icon: Radio },
                       { id: "broadcast", label: "Live Control Room", icon: Video, badge: liveEventId ? "ON AIR" : undefined },
                       { id: "broadcast-library", label: "Broadcast Library", icon: Film, count: savedBroadcasts.length },
                       { id: "banner-manager", label: "Student Banner & Photos", icon: ImageIcon, count: heroSlides.length },
@@ -1332,7 +1363,7 @@ export default function App() {
                     </div>
                     <div className="flex justify-between text-slate-400">
                       <span>Digital Snake</span>
-                      <span className="text-amber-400 font-mono">DEMO DATA</span>
+                      <span className="text-emerald-400 font-mono">LIVE WORKSPACE</span>
                     </div>
                   </>
                 ) : (
@@ -2381,7 +2412,7 @@ export default function App() {
                   <span className="stage-control-strip__signal" />
                   <div>
                     <strong>Stage operations</strong>
-                    <span>LOCAL DEMO · HARDWARE NOT CONNECTED</span>
+                    <span>HARDWARE NOT CONNECTED</span>
                   </div>
                 </div>
                 <label>
