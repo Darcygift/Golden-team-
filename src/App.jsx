@@ -184,10 +184,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(Boolean(supabase));
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminCredentials, setAdminCredentials] = useState({
-    email: "admin.director@wms.ac.rw",
-    key: "WMS-ADMIN-2026"
-  });
+  const [adminCredentials, setAdminCredentials] = useState({ email: "", key: "" });
   const [adminAuthError, setAdminAuthError] = useState("");
   const [adminAccounts, setAdminAccounts] = useState(() => {
     try {
@@ -201,7 +198,7 @@ export default function App() {
     }
   });
   const [showAccountModal, setShowAccountModal] = useState(false);
-  const [newAdminAccount, setNewAdminAccount] = useState({ name: "", email: "", role: "Producer" });
+  const [newAdminAccount, setNewAdminAccount] = useState({ name: "", email: "", password: "", role: "Producer" });
   const [accountError, setAccountError] = useState("");
 
   // Live stage console state
@@ -919,16 +916,24 @@ export default function App() {
       return;
     }
     const email = adminCredentials.email.trim().toLowerCase();
-    if (!email || !adminCredentials.key) {
-      setAdminAuthError("Enter your institutional email and password.");
-      return;
-    }
-    const { error } = await supabase.auth.signInWithPassword({ email, password: adminCredentials.key });
-    if (error) {
-      setAdminAuthError("Sign-in failed. Check your email, password, and confirmation status.");
-      return;
-    }
-    setActiveNav("stage");
+if (!email || !adminCredentials.key) {
+    setAdminAuthError("Enter the email and password for an approved production account.");
+    return;
+  }
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password: adminCredentials.key });
+  if (error) {
+    setAdminAuthError(error.message?.toLowerCase().includes("confirm")
+      ? "Confirm this email address before signing in."
+      : "Unable to sign in. Check the email, password, and that an administrator has approved this account.");
+    return;
+  }
+  const { data: profile } = await supabase.from("wms_profiles").select("role").eq("id", data.user.id).maybeSingle();
+  if (!profile || !["admin", "producer", "stage_manager"].includes(profile.role)) {
+    await supabase.auth.signOut();
+    setAdminAuthError("This account is not approved for the admin portal yet. Ask an administrator to assign a production role.");
+    return;
+  }
+  setActiveNav("stage");
     setShowAdminModal(false);
     triggerCueAction("Authenticated production session started");
   };
@@ -938,29 +943,37 @@ export default function App() {
     setAccountError("");
     const name = newAdminAccount.name.trim();
     const email = newAdminAccount.email.trim().toLowerCase();
+    const password = newAdminAccount.password;
     if (!supabase) {
       setAccountError("Authentication is not configured for this deployment.");
       return;
     }
-    if (!name || !email) {
-      setAccountError("Enter the operator name and institutional email.");
+    if (!name || !email || !password) {
+      setAccountError("Enter a name, institutional email, and a temporary password.");
       return;
     }
-    const { error } = await supabase.auth.signUp({
+    if (password.length < 8) {
+      setAccountError("Temporary passwords must be at least 8 characters.");
+      return;
+    }
+    const { data: signUpData, error } = await supabase.auth.signUp({
       email,
-      password: `${crypto.randomUUID()}-${crypto.randomUUID()}`,
+      password,
       options: {
         data: { full_name: name },
-        emailRedirectTo: `${window.location.origin}/auth/callback`
+        emailRedirectTo: import.meta.env.VITE_SUPABASE_REDIRECT_URL || `${window.location.origin}/auth/callback`
       }
     });
     if (error) {
       setAccountError("Account creation failed. The email may already be registered or unavailable.");
       return;
     }
-    setNewAdminAccount({ name: "", email: "", role: "Producer" });
+    if (signUpData.user && signUpData.session && authUser && userRole === "admin") {
+      await supabase.from("wms_profiles").update({ role: newAdminAccount.role.toLowerCase().replace(" ", "_") }).eq("id", signUpData.user.id);
+    }
+    setNewAdminAccount({ name: "", email: "", password: "", role: "Producer" });
     setShowAccountModal(false);
-    triggerCueAction(`Invitation created for ${email}; role approval required`);
+    triggerCueAction(`Account created for ${email}; administrator approval is required before portal access`);
   };
 
   const handleRemoveAdminAccount = (id) => {
@@ -3344,6 +3357,7 @@ export default function App() {
             <form onSubmit={handleCreateAdminAccount} className="space-y-4 text-xs">
               <label className="block"><span className="mb-1 block font-medium text-slate-400">Full name</span><input required value={newAdminAccount.name} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, name: event.target.value })} placeholder="e.g. Aline Uwase" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /></label>
               <label className="block"><span className="mb-1 block font-medium text-slate-400">Institutional email</span><input required type="email" value={newAdminAccount.email} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, email: event.target.value })} placeholder="name@wms.ac.rw" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /></label>
+              <label className="block"><span className="mb-1 block font-medium text-slate-400">Temporary password</span><input required type="password" minLength={8} value={newAdminAccount.password} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, password: event.target.value })} placeholder="At least 8 characters" className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500" /><span className="mt-1 block text-[11px] text-slate-500">Give this to the operator securely. They can change it after sign-in.</span></label>
               <label className="block"><span className="mb-1 block font-medium text-slate-400">Workspace role</span><select value={newAdminAccount.role} onChange={(event) => setNewAdminAccount({ ...newAdminAccount, role: event.target.value })} className="w-full rounded-xl border border-slate-800 bg-slate-950 px-3.5 py-2.5 text-white outline-none focus:border-amber-500"><option>Producer</option><option>Stage Manager</option><option>Viewer</option></select></label>
               {accountError && <p className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-red-400">{accountError}</p>}
               <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-xl bg-amber-600 py-3 font-bold text-white hover:bg-amber-500"><UserPlus className="h-4 w-4" /> Create account</button>
